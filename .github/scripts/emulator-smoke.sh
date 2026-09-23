@@ -69,7 +69,7 @@ relaunch() {
 
 alive_or_die() {
   local step="$1" mode="${2:-die}" pid crash events managed
-  pid=$(adb shell pidof "$PKG" | tr -d '')
+  pid=$(adb shell pidof "$PKG" | tr -d '\r')
   crash=$(adb logcat -d 2>/dev/null | grep -B3 -A45 -E "FATAL EXCEPTION|Unhandled managed exception|Fatal signal" | head -70)
   if [ -n "$pid" ] && [ -z "$crash" ]; then return 0; fi
 
