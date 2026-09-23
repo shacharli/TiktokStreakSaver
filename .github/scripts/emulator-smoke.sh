@@ -58,28 +58,42 @@ PY
   adb shell input tap $xy
 }
 
-alive_or_die() {
-  local step="$1" pid crash
-  pid=$(adb shell pidof "$PKG" | tr -d '\r')
-  crash=$(adb logcat -d 2>/dev/null | grep -B3 -A45 -E "FATAL EXCEPTION|Unhandled managed exception|Fatal signal" | head -70)
-  if [ -z "$pid" ] || [ -n "$crash" ]; then
-    if [ -z "$crash" ]; then
-      crash=$(adb logcat -d -b all 2>/dev/null | grep -E "$PKG|AndroidRuntime|monodroid|mono-rt|am_crash|am_proc_died|am_anr|has died|Force finishing|FATAL" | tail -c 3300)
-    fi
-    err "CRASH after: $step" "${crash:-process exited with no logcat marker}"
-    local last
-    last=$(adb shell run-as "$PKG" cat files/last_crash.txt 2>/dev/null)
-    [ -n "$last" ] && err "last_crash.txt" "$last"
-    snapshot "crash"
-    exit 1
-  fi
+FAIL=0
+
+relaunch() {
+  adb logcat -c
+  adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  sleep 15
+  snapshot relaunch
 }
 
-step() { # label, text to tap, seconds to wait afterwards
+alive_or_die() {
+  local step="$1" mode="${2:-die}" pid crash events managed
+  pid=$(adb shell pidof "$PKG" | tr -d '')
+  crash=$(adb logcat -d 2>/dev/null | grep -B3 -A45 -E "FATAL EXCEPTION|Unhandled managed exception|Fatal signal" | head -70)
+  if [ -n "$pid" ] && [ -z "$crash" ]; then return 0; fi
+
+  events=$(adb logcat -d -b events 2>/dev/null | grep -E "am_finish_activity|wm_finish_activity|am_crash|am_proc_died.*$PKG|am_destroy_activity|am_anr" | tail -c 1500)
+  managed=$(adb logcat -d -b all 2>/dev/null | grep -E "monodroid|mono-rt|System\.|Exception|AndroidRuntime" | grep -v "Shutting down VM" | head -c 3000)
+  err "APP GONE after: $step" "process=${pid:-none}
+events:
+${events:-(none)}"
+  [ -n "$crash" ] && err "CRASH after: $step" "$crash"
+  [ -n "$managed" ] && note "exceptions after: $step" "$managed"
+  local last
+  last=$(adb shell run-as "$PKG" cat files/last_crash.txt 2>/dev/null)
+  [ -n "$last" ] && err "last_crash.txt" "$last"
+  snapshot "gone-$step"
+  FAIL=1
+  if [ "$mode" = "recover" ]; then relaunch; return 0; fi
+  exit 1
+}
+
+step() { # label, text to tap, seconds to wait afterwards, optional "recover"
   if tap_text "$2"; then
     sleep "$3"
     snapshot "$1"
-    alive_or_die "$1"
+    alive_or_die "$1" "${4:-die}"
   else
     note "skipped:$1" "could not find '$2' on screen"
   fi
@@ -96,7 +110,7 @@ sleep 25
 snapshot launch
 alive_or_die launch
 
-step welcome "Continue" 8
+step welcome "Continue" 8 recover
 step profile "Profile" 4
 step accounts "Manage accounts" 4
 step add-account "Add account" 3
@@ -106,4 +120,5 @@ sleep 4
 snapshot after-back
 alive_or_die after-back
 
-note "result" "smoke test passed: app launched, navigated Profile > Accounts > Add account > Login page without crashing"
+note "result" "steps finished (FAIL=$FAIL)"
+exit $FAIL
