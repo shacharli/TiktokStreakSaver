@@ -18,6 +18,25 @@ dump_ui() {
   return 1
 }
 
+dismiss_system_dialogs() {
+  # Emulators on CI often show "X isn't responding" for the launcher; tap Wait/OK and close system dialogs.
+  local i
+  for i in 1 2 3; do
+    adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1
+    dump_ui sysdlg || return 0
+    if grep -qE "isn't responding|keeps stopping|has stopped" "$OUT/sysdlg.xml"; then
+      tap_text "Wait" || tap_text "Close app" || tap_text "OK" || adb shell input keyevent KEYCODE_BACK
+      sleep 3
+    else
+      return 0
+    fi
+  done
+}
+
+app_in_front() {
+  adb shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus|mFocusedApp" | grep -q "$PKG"
+}
+
 snapshot() {
   adb exec-out screencap -p > "$OUT/$1.png" 2>/dev/null
   dump_ui "$1" || { note "screen:$1" "(ui dump failed)"; return; }
@@ -90,23 +109,38 @@ ${events:-(none)}"
 }
 
 step() { # label, text to tap, seconds to wait afterwards, optional "recover"
+  dismiss_system_dialogs
+  if ! app_in_front; then
+    note "not-in-front:$1" "app was not in front before this step; relaunching"
+    adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+    sleep 8
+    dismiss_system_dialogs
+  fi
   if tap_text "$2"; then
     sleep "$3"
+    dismiss_system_dialogs
     snapshot "$1"
     alive_or_die "$1" "${4:-die}"
   else
-    note "skipped:$1" "could not find '$2' on screen"
+    snapshot "missing-$1"
+    err "step failed:$1" "could not find '$2' on screen"
+    FAIL=1
   fi
 }
 
 APK=$(ls apk/*-Signed.apk 2>/dev/null | head -1)
 [ -z "$APK" ] && APK=$(ls apk/*.apk | head -1)
+adb wait-for-device
+until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; do sleep 2; done
+sleep 20
+dismiss_system_dialogs
 echo "Installing $APK"
 adb install -r -g "$APK" || { err "install failed" "adb install returned an error for $APK"; exit 1; }
 
 adb logcat -c
 adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
 sleep 25
+dismiss_system_dialogs
 snapshot launch
 alive_or_die launch
 
