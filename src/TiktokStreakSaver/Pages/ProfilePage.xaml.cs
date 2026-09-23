@@ -52,6 +52,12 @@ public partial class ProfilePage : ContentPage
 
         LoadProfilePhoto();
 
+#if ANDROID
+        var lastCrash = TiktokStreakSaver.Platforms.Android.CrashLog.TakeLast();
+        if (lastCrash != null)
+            await DisplayAlert("Last crash (send this to Claude)", lastCrash, "OK");
+#endif
+
         DisplayNameEntry.Text = _sessionService.GetDisplayName();
 
         ScheduleSwitch.IsToggled = _settingsService.IsScheduled();

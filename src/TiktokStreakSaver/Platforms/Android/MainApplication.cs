@@ -21,6 +21,7 @@ namespace TiktokStreakSaver
         public override void OnCreate()
         {
             base.OnCreate();
+            TiktokStreakSaver.Platforms.Android.CrashLog.Install();
 
             try
             {

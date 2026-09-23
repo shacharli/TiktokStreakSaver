@@ -28,9 +28,8 @@ public partial class LoginPage : ContentPage
             ?? _accountService.Add("Account 1").Id;
     }
 
-    protected override async void OnAppearing()
+    private async Task AppearingCore()
     {
-        base.OnAppearing();
         _webViewTornDown = false;
         _isLoggedIn = false;
         _completionInProgress = false;
@@ -42,6 +41,34 @@ public partial class LoginPage : ContentPage
         LoadTikTok();
         await TryCompleteExistingSessionAsync();
     }
+
+    // Any exception escaping an async void handler kills the whole app, so log it and show it instead.
+    private async Task Guard(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+#if ANDROID
+            TiktokStreakSaver.Platforms.Android.CrashLog.Write("LoginPage", ex);
+#endif
+            _completionInProgress = false;
+            try { await DisplayAlert("Login problem", ex.Message, "OK"); } catch { }
+        }
+    }
+
+    protected override async void OnAppearing()
+    {
+        base.OnAppearing();
+        await Guard(AppearingCore);
+    }
+
+    private async void OnWebViewNavigated(object? sender, WebNavigatedEventArgs e) =>
+        await Guard(() => NavigatedCore(e));
+
+    private Task Done(bool showSuccessAlert = true) => Guard(() => DoneCore(showSuccessAlert));
 
     protected override void OnDisappearing()
     {
@@ -86,7 +113,7 @@ public partial class LoginPage : ContentPage
 #endif
     }
 
-    private async void OnWebViewNavigated(object? sender, WebNavigatedEventArgs e)
+    private async Task NavigatedCore(WebNavigatedEventArgs e)
     {
         if (_isLoggedIn || _completionInProgress) return;
         LoadingOverlay.IsVisible = false;
@@ -136,7 +163,7 @@ public partial class LoginPage : ContentPage
         TikTokWebViewHelper.TearDownLoginWebView(TikTokWebView);
     }
 
-    private async Task Done(bool showSuccessAlert = true)
+    private async Task DoneCore(bool showSuccessAlert)
     {
         if (_completionInProgress)
             return;
