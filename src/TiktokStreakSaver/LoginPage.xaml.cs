@@ -13,6 +13,7 @@ public partial class LoginPage : ContentPage
     private bool _completionInProgress;
     private readonly AccountService _accountService = new();
     private readonly string _accountId;
+    private bool _cookiesPrepared;
 
     public LoginPage() : this(null)
     {
@@ -35,8 +36,13 @@ public partial class LoginPage : ContentPage
         _completionInProgress = false;
 #if ANDROID
         // Keep any pre-multi-account session, then start from a logged-out jar so this login is for this account only.
-        await TiktokStreakSaver.Platforms.Android.Services.AccountCookieJar.EnsureMigratedAsync(_accountService, _settingsService);
-        await TiktokStreakSaver.Platforms.Android.Services.AccountCookieJar.ClearAsync();
+        // Only on first appearance: clearing again after returning to the page would wipe a login in progress.
+        if (!_cookiesPrepared)
+        {
+            _cookiesPrepared = true;
+            await TiktokStreakSaver.Platforms.Android.Services.AccountCookieJar.EnsureMigratedAsync(_accountService, _settingsService);
+            await TiktokStreakSaver.Platforms.Android.Services.AccountCookieJar.ClearAsync();
+        }
 #endif
         LoadTikTok();
         await TryCompleteExistingSessionAsync();
@@ -169,10 +175,9 @@ public partial class LoginPage : ContentPage
             return;
         _completionInProgress = true;
 
-        TearDownLoginWebView();
-
         if (_isLoggedIn)
         {
+            // Persist everything before tearing the WebView down, so nothing is lost if teardown misbehaves.
             if (!_sessionService.TrySetSessionValid(true, out var persistError))
             {
                 _completionInProgress = false;
@@ -196,6 +201,8 @@ public partial class LoginPage : ContentPage
             account.LastSnapshot = DateTime.Now;
             _accountService.Update(account);
 #endif
+
+            TearDownLoginWebView();
 
             AppStorageProvider.Current.SetBool(AppConstants.AuthRequiredKey, false);
 

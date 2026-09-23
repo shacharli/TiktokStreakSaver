@@ -25,6 +25,9 @@ public static class TikTokWebViewHelper
         {
             if (webView.Handler?.PlatformView is Android.Webkit.WebView awv)
             {
+                // Swap out MAUI's client first: its OnPageFinished throws "VirtualView cannot be null"
+                // if a page finishes after the handler is disconnected, which kills the app.
+                awv.SetWebViewClient(new Android.Webkit.WebViewClient());
                 awv.StopLoading();
                 awv.OnPause();
                 awv.PauseTimers();

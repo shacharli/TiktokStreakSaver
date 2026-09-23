@@ -160,5 +160,14 @@ sleep 4
 snapshot after-back
 alive_or_die after-back
 
+# Race check: leave the login page while it is still loading (the teardown path that used to crash).
+for i in 1 2 3; do
+  step "quick-login-$i" "Login" 2
+  adb shell input keyevent KEYCODE_BACK
+  sleep 3
+  alive_or_die "quick-back-$i"
+done
+snapshot after-race
+
 note "result" "steps finished (FAIL=$FAIL)"
 exit $FAIL
