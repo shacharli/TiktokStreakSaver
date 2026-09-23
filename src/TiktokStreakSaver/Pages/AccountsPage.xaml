@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="TiktokStreakSaver.Pages.AccountsPage"
+             Title="Accounts"
+             Shell.NavBarIsVisible="False"
+             NavigationPage.HasNavigationBar="False"
+             BackgroundColor="{AppThemeBinding Light={StaticResource PageBackgroundLight}, Dark={StaticResource OffBlack}}">
+
+    <Grid RowDefinitions="Auto, *, Auto">
+
+        <Border Grid.Row="0"
+                BackgroundColor="{AppThemeBinding Light={StaticResource CardBackgroundLight}, Dark={StaticResource CardBackgroundDark}}"
+                Stroke="Transparent"
+                StrokeThickness="0"
+                StrokeShape="RoundRectangle 0,0,20,20"
+                Padding="20">
+            <VerticalStackLayout Spacing="4">
+                <Label Text="Accounts"
+                       TextColor="{AppThemeBinding Light={StaticResource Gray950}, Dark={StaticResource White}}"
+                       FontFamily="InterSemiBold"
+                       FontSize="20"/>
+                <Label Text="Each account keeps its own TikTok login and its own friends. Accounts run one after another."
+                       TextColor="{AppThemeBinding Light={StaticResource Gray400}, Dark={StaticResource Gray400}}"
+                       FontSize="13"
+                       LineBreakMode="WordWrap"/>
+            </VerticalStackLayout>
+        </Border>
+
+        <ScrollView Grid.Row="1">
+            <VerticalStackLayout x:Name="AccountsContainer" Spacing="12" Padding="16"/>
+        </ScrollView>
+
+        <Border Grid.Row="2" Style="{StaticResource BottomActionBorder}">
+            <Grid ColumnDefinitions="*, *" ColumnSpacing="12">
+                <Button Text="Back"
+                        Style="{StaticResource TextButton}"
+                        HeightRequest="44"
+                        Clicked="OnBackClicked"/>
+                <Button Grid.Column="1"
+                        Text="Add account"
+                        BackgroundColor="{AppThemeBinding Light={StaticResource Primary}, Dark={StaticResource PrimaryDark}}"
+                        TextColor="{AppThemeBinding Light={StaticResource White}, Dark={StaticResource PrimaryDarkText}}"
+                        FontFamily="InterSemiBold"
+                        CornerRadius="14"
+                        HeightRequest="44"
+                        Clicked="OnAddAccountClicked"/>
+            </Grid>
+        </Border>
+    </Grid>
+</ContentPage>

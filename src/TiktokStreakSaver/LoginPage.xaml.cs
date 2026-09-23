@@ -11,12 +11,21 @@ public partial class LoginPage : ContentPage
     private bool _isLoggedIn;
     private bool _webViewTornDown;
     private bool _completionInProgress;
+    private readonly AccountService _accountService = new();
+    private readonly string _accountId;
 
-    public LoginPage()
+    public LoginPage() : this(null)
+    {
+    }
+
+    public LoginPage(string? accountId)
     {
         InitializeComponent();
         _sessionService = new SessionService();
         _settingsService = new SettingsService();
+        _accountId = accountId
+            ?? _accountService.GetAccounts().FirstOrDefault()?.Id
+            ?? _accountService.Add("Account 1").Id;
     }
 
     protected override async void OnAppearing()
@@ -25,6 +34,11 @@ public partial class LoginPage : ContentPage
         _webViewTornDown = false;
         _isLoggedIn = false;
         _completionInProgress = false;
+#if ANDROID
+        // Keep any pre-multi-account session, then start from a logged-out jar so this login is for this account only.
+        await TiktokStreakSaver.Platforms.Android.Services.AccountCookieJar.EnsureMigratedAsync(_accountService, _settingsService);
+        await TiktokStreakSaver.Platforms.Android.Services.AccountCookieJar.ClearAsync();
+#endif
         LoadTikTok();
         await TryCompleteExistingSessionAsync();
     }
@@ -139,6 +153,22 @@ public partial class LoginPage : ContentPage
                     persistError ?? "Login succeeded but session state did not persist on this device.", "OK");
                 return;
             }
+
+#if ANDROID
+            var account = _accountService.Get(_accountId);
+            if (account == null
+                || !await TiktokStreakSaver.Platforms.Android.Services.AccountCookieJar.SnapshotAsync(_accountService, _accountId))
+            {
+                _completionInProgress = false;
+                await DisplayAlert("Could Not Save Session",
+                    "Login worked, but the session could not be stored securely on this device.", "OK");
+                return;
+            }
+            account.UserAgent = AppConstants.DesktopChromeUserAgent;
+            account.SessionValid = true;
+            account.LastSnapshot = DateTime.Now;
+            _accountService.Update(account);
+#endif
 
             AppStorageProvider.Current.SetBool(AppConstants.AuthRequiredKey, false);
 

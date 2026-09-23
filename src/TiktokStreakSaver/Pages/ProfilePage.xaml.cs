@@ -207,7 +207,17 @@ public partial class ProfilePage : ContentPage
 
     private async void OnLoginClicked(object? sender, EventArgs e)
     {
-        await Navigation.PushAsync(new LoginPage());
+        var accountService = new AccountService();
+        if (accountService.GetAccounts().Count == 0)
+            await Navigation.PushAsync(new LoginPage(accountService.Add("Account 1").Id));
+        else
+            await Navigation.PushAsync(new AccountsPage());
+        await UpdateLoginButtonStateAsync();
+    }
+
+    private async void OnManageAccountsClicked(object? sender, EventArgs e)
+    {
+        await Navigation.PushAsync(new AccountsPage());
         await UpdateLoginButtonStateAsync();
     }
 

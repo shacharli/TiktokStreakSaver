@@ -34,6 +34,17 @@ public class StreakService : Service
     private string _baseScript = string.Empty;
     private readonly List<string> _disabledUsernames = new();
     private const string UserNotFoundError = "User not found in chat list";
+    private const string MessagesUrl = "https://www.tiktok.com/messages?lang=en";
+
+    // ── Multi-account state: accounts run strictly one after another, each with its own cookie jar ──
+    private AccountService? _accountService;
+    private List<AccountPlanner.Batch> _accountQueue = new();
+    private int _accountIndex;
+    private Account? _currentAccount;
+    private int _accountResultStart;
+    private bool _accountExpired;
+    private bool _anyAccountFailed;
+    private int _accountGeneration;
 
     // ── Randomized Normal Messages state ──
     private List<string>? _shuffledNormalMessages;
@@ -279,22 +290,26 @@ public class StreakService : Service
             _logs.Clear();
 
             _friendsToProcess = new List<FriendConfig>();
+            _accountIndex = 0;
+            _currentAccount = null;
+            _anyAccountFailed = false;
+            _accountExpired = false;
 
             var allEnabled = _settingsService?.GetEnabledFriends() ?? new List<FriendConfig>();
             var today = DateTime.Now.Date;
 
-            foreach (var friend in allEnabled)
+            _accountService = new AccountService();
+            await AccountCookieJar.EnsureMigratedAsync(_accountService, _settingsService!);
+            var accounts = _accountService.GetAccounts();
+
+            _accountQueue = AccountPlanner.BuildQueue(accounts, allEnabled, today, out var alreadySent, out var needRelogin);
+            _cooldownSkippedCount = alreadySent;
+            var totalDue = _accountQueue.Sum(b => b.Friends.Count);
+
+            foreach (var account in needRelogin)
             {
-                if (friend.LastMessageSent.HasValue && friend.LastMessageSent.Value.Date == today)
-                {
-                    _cooldownSkippedCount++;
-                    AppLog("SKIP", $"@{friend.Username}",
-                        $"Already messaged today at {friend.LastMessageSent.Value:HH:mm}");
-                }
-                else
-                {
-                    _friendsToProcess.Add(friend);
-                }
+                AppLog("ACCOUNT", account.Label, "Skipped - session expired, re-login required");
+                NotifyReloginNeeded(account);
             }
 
             // Initialize randomized message pool if user opted in.
@@ -311,14 +326,16 @@ public class StreakService : Service
             }
 
             AppLog("SYSTEM", "-",
-                $"Starting automation: {_friendsToProcess.Count} to process, {_cooldownSkippedCount} skipped (already sent today)");
+                $"Starting automation: {totalDue} to process across {_accountQueue.Count} account(s), {_cooldownSkippedCount} skipped (already sent today)");
 
-            if (_friendsToProcess.Count == 0)
+            if (totalDue == 0)
             {
-                var msg = _cooldownSkippedCount > 0
-                    ? $"All {_cooldownSkippedCount} friends already messaged today"
-                    : "No friends configured";
-                CompleteService(_cooldownSkippedCount > 0, msg);
+                string msg;
+                if (accounts.Count == 0) msg = "No TikTok account logged in. Add one from Profile.";
+                else if (needRelogin.Count > 0) msg = $"Re-login needed: {string.Join(", ", needRelogin.Select(a => a.Label))}";
+                else if (_cooldownSkippedCount > 0) msg = $"All {_cooldownSkippedCount} friends already messaged today";
+                else msg = "No friends configured";
+                CompleteService(_cooldownSkippedCount > 0 && needRelogin.Count == 0, msg);
                 return;
             }
 
@@ -342,12 +359,6 @@ public class StreakService : Service
             _webView.Settings.DatabaseEnabled = true;
             _webView.Settings.CacheMode = CacheModes.Normal;
 
-            // Reuse the UA captured at login time so cookies stay valid; fall back to a modern Chrome desktop UA.
-            var sessionService = new SessionService();
-            var loginUa = sessionService.GetLoginUserAgent()
-                ?? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-            _webView.Settings.UserAgentString = loginUa;
-
             _webView.Settings.SetSupportZoom(true);
             _webView.Settings.BuiltInZoomControls = true;
 
@@ -364,22 +375,8 @@ public class StreakService : Service
 
             _webView.SetWebViewClient(new StreakWebViewClient(this));
             _webView.AddJavascriptInterface(new StreakJsInterface(this), "StreakApp");
-            _webView.LoadUrl("https://www.tiktok.com/messages?lang=en");
 
-            _mainHandler!.PostDelayed(() =>
-            {
-                if (!(_webView?.Url ?? "").Contains("tiktok.com/messages"))
-                {
-                    _webView?.LoadUrl("https://www.tiktok.com/messages?lang=en");
-                    _mainHandler.PostDelayed(() =>
-                    {
-                        if (!(_webView?.Url ?? "").Contains("tiktok.com/messages"))
-                        {
-                            CompleteService(false, "Could not navigate to tiktok.com/messages");
-                        }
-                    }, 5000);
-                }
-            }, 5000);
+            BeginAccount();
         }
         catch (Exception ex)
         {
@@ -415,9 +412,160 @@ public class StreakService : Service
         else if (url.Contains("login"))
         {
             AppLog("NAVIGATION", "-", "TikTok login required");
-            // User needs to login
-            CompleteService(false, "TikTok login required. Please login via the app first.");
+            ExpireCurrentAccount("Session expired - login required");
         }
+    }
+
+    private async void BeginAccount()
+    {
+        var generation = ++_accountGeneration;
+        try
+        {
+            if (_isCancelRequested) return;
+            if (_accountIndex >= _accountQueue.Count) { FinishRun(); return; }
+
+            var batch = _accountQueue[_accountIndex];
+            _currentAccount = batch.Account;
+            _friendsToProcess = batch.Friends;
+            _currentFriendIndex = 0;
+            _failureAttemptsForCurrentFriend = 0;
+            _automationStarted = false;
+            _accountExpired = false;
+            _accountResultStart = _runResult?.FriendResults.Count ?? 0;
+
+            AppLog("ACCOUNT", batch.Account.Label, $"Starting ({batch.Friends.Count} to process)");
+            UpdateNotification($"Account {_accountIndex + 1}/{_accountQueue.Count}: {batch.Account.Label}");
+
+            _webView?.LoadUrl("about:blank");
+            if (!await AccountCookieJar.ApplyAsync(_accountService!, batch.Account.Id))
+            {
+                ExpireCurrentAccount("No saved session for this account");
+                return;
+            }
+            if (generation != _accountGeneration || _webView == null || _isCancelRequested) return;
+
+            _webView.Settings.UserAgentString = string.IsNullOrEmpty(batch.Account.UserAgent)
+                ? AppConstants.DesktopChromeUserAgent
+                : batch.Account.UserAgent;
+            _webView.LoadUrl(MessagesUrl);
+
+            _mainHandler?.PostDelayed(() => CheckNavigation(generation, retried: false), 8000);
+
+            // Watchdog so one stuck account can never block the accounts after it.
+            var budgetMs = 180_000 + 90_000 * batch.Friends.Count;
+            _mainHandler?.PostDelayed(() =>
+            {
+                if (generation != _accountGeneration || _isCancelRequested) return;
+                AppLog("FAIL", batch.Account.Label, "Account timed out");
+                FinishAccount(false, "Timed out");
+            }, budgetMs);
+        }
+        catch (Exception ex)
+        {
+            AppLog("FAIL", "-", $"Account setup error: {ex.Message}");
+            FinishAccount(false, ex.Message);
+        }
+    }
+
+    private void CheckNavigation(int generation, bool retried)
+    {
+        if (generation != _accountGeneration || _automationStarted || _isCancelRequested) return;
+        if ((_webView?.Url ?? "").Contains("tiktok.com/messages")) return;
+
+        if (!retried)
+        {
+            _webView?.LoadUrl(MessagesUrl);
+            _mainHandler?.PostDelayed(() => CheckNavigation(generation, retried: true), 8000);
+            return;
+        }
+        FinishAccount(false, "Could not navigate to tiktok.com/messages");
+    }
+
+    private void ExpireCurrentAccount(string reason)
+    {
+        if (_currentAccount == null || _accountExpired) return;
+        _accountExpired = true;
+        _currentAccount.SessionValid = false;
+        _accountService?.Update(_currentAccount);
+        AppLog("ACCOUNT", _currentAccount.Label, reason);
+        NotifyReloginNeeded(_currentAccount);
+
+        foreach (var f in (_friendsToProcess ?? new List<FriendConfig>()).Skip(_currentFriendIndex))
+        {
+            _runResult?.FriendResults.Add(new FriendMessageResult
+            {
+                FriendId = f.Id,
+                Username = f.IsGroup ? f.DisplayName : f.Username,
+                Success = false,
+                ErrorMessage = reason
+            });
+        }
+        FinishAccount(false, reason);
+    }
+
+    private async void FinishAccount(bool ok, string message)
+    {
+        try
+        {
+            _accountGeneration++;
+            if (!ok) _anyAccountFailed = true;
+            _webView?.LoadUrl("about:blank");
+            AppLog("ACCOUNT", _currentAccount?.Label ?? "-", ok ? "Finished" : $"Finished with errors: {message}");
+
+            // TikTok rotates cookies during a session; keep the stored copy fresh.
+            if (_currentAccount != null && !_accountExpired && _accountService != null
+                && await AccountCookieJar.SnapshotAsync(_accountService, _currentAccount.Id))
+            {
+                _currentAccount.SessionValid = true;
+                _currentAccount.LastSnapshot = DateTime.Now;
+                _accountService.Update(_currentAccount);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog("WARN", "-", $"Cookie refresh failed: {ex.Message}");
+        }
+
+        if (_isCancelRequested) return;
+
+        _accountIndex++;
+        if (_accountIndex < _accountQueue.Count)
+        {
+            var delayMs = _rng.Next(30_000, 90_001);
+            AppLog("SYSTEM", "-", $"Next account in {delayMs / 1000}s");
+            UpdateNotification($"Next account in {delayMs / 1000}s...");
+            _mainHandler?.PostDelayed(BeginAccount, delayMs);
+        }
+        else
+        {
+            FinishRun();
+        }
+    }
+
+    private void FinishRun()
+    {
+        var results = _runResult?.FriendResults ?? new List<FriendMessageResult>();
+        var success = !_anyAccountFailed && results.All(r => r.Success);
+        var message = success
+            ? "All messages sent successfully"
+            : $"{results.Count(r => r.Success)} of {results.Count} sent";
+        CompleteService(success, message);
+    }
+
+    private void NotifyReloginNeeded(Account account)
+    {
+        var body = $"{account.Label}: TikTok session expired. Open Profile > Accounts and log in again.";
+        var notification = new NotificationCompat.Builder(this, StatusChannelId)
+            .SetContentTitle("TikTok Streak Saver - re-login needed")
+            .SetContentText(body)
+            .SetStyle(new NotificationCompat.BigTextStyle().BigText(body))
+            .SetSmallIcon(Resource.Drawable.ic_notification)
+            .SetContentIntent(CreateMainActivityPendingIntent())
+            .SetAutoCancel(true)
+            .SetPriority(NotificationCompat.PriorityDefault)
+            .Build()!;
+        var notificationManager = (NotificationManager?)GetSystemService(NotificationService);
+        notificationManager?.Notify(NotificationId + 100 + ((account.Id.GetHashCode() & 0x7fffffff) % 100), notification);
     }
 
     private void ProcessNextFriend()
@@ -426,20 +574,17 @@ public class StreakService : Service
 
         // When "Skip Unreachable Users" is OFF, abort the entire run on any per-user failure
         bool skipUnreachable = _settingsService?.GetSkipUnreachableUsers() ?? false;
-        if (!skipUnreachable && _runResult is not null && _runResult.Failed)
+        var accountResults = _runResult?.FriendResults.Skip(_accountResultStart).ToList() ?? new List<FriendMessageResult>();
+        if (!skipUnreachable && accountResults.Any(r => r.Failed))
         {
-            CompleteService(false, $"Run stopped: {_runResult.ErrorMessage ?? _runResult.FriendsErrorMessage}");
+            FinishAccount(false, $"Account stopped: {accountResults.First(r => r.Failed).ErrorMessage}");
             return;
         }
 
         if (_friendsToProcess == null || _currentFriendIndex >= _friendsToProcess.Count)
         {
-            // All friends processed — mark success only if every friend succeeded
-            var allSucceeded = _runResult?.FriendResults.All(r => r.Success) ?? false;
-            var completionMessage = allSucceeded
-                ? "All messages sent successfully"
-                : $"{_runResult?.FriendResults.Count(r => r.Success) ?? 0} of {_runResult?.FriendResults.Count ?? 0} sent";
-            CompleteService(allSucceeded, completionMessage);
+            var accountOk = accountResults.All(r => r.Success);
+            FinishAccount(accountOk, accountOk ? "All messages sent" : "Some messages failed");
             return;
         }
 

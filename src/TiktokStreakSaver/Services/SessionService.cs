@@ -134,6 +134,7 @@ public class SessionService
         _storage.Remove(SessionLastCheckKey);
 
         TikTokWebViewHelper.ClearAllCookies();
+        new AccountService().RemoveAll();
 #if IOS
         Platforms.iOS.Services.IosSessionFileStorage.Clear();
         Platforms.iOS.Services.CookieSyncService.ClearExportedCookies();

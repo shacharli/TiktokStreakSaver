@@ -196,6 +196,16 @@
                                 </Grid>
 
                                 <VerticalStackLayout x:Name="AddFriendPanel" IsVisible="False" Spacing="8">
+                                    <Border x:Name="NewFriendAccountBorder"
+                                            IsVisible="False"
+                                            StrokeThickness="0"
+                                            StrokeShape="RoundRectangle 16"
+                                            BackgroundColor="{AppThemeBinding Light={StaticResource Gray100}, Dark={StaticResource Gray900}}">
+                                        <Picker x:Name="NewFriendAccountPicker"
+                                                Title="Account"
+                                                Margin="12,4"
+                                                BackgroundColor="Transparent"/>
+                                    </Border>
                                     <Border StrokeThickness="0"
                                             StrokeShape="RoundRectangle 16"
                                             BackgroundColor="{AppThemeBinding Light={StaticResource Gray100}, Dark={StaticResource Gray900}}">
@@ -286,6 +296,16 @@
                                 </Grid>
 
                                 <VerticalStackLayout x:Name="AddGroupPanel" IsVisible="False" Spacing="8">
+                                    <Border x:Name="NewGroupAccountBorder"
+                                            IsVisible="False"
+                                            StrokeThickness="0"
+                                            StrokeShape="RoundRectangle 16"
+                                            BackgroundColor="{AppThemeBinding Light={StaticResource Gray100}, Dark={StaticResource Gray900}}">
+                                        <Picker x:Name="NewGroupAccountPicker"
+                                                Title="Account"
+                                                Margin="12,4"
+                                                BackgroundColor="Transparent"/>
+                                    </Border>
                                     <Border StrokeThickness="0"
                                             StrokeShape="RoundRectangle 16"
                                             BackgroundColor="{AppThemeBinding Light={StaticResource Gray100}, Dark={StaticResource Gray900}}">

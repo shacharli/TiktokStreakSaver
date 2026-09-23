@@ -46,6 +46,11 @@ public class FriendConfig
     /// instead of by username (groups have no profile link / @handle).
     /// </summary>
     public bool IsGroup { get; set; } = false;
+
+    /// <summary>
+    /// Account this friend belongs to. Empty means the first account (entries saved before multi-account support).
+    /// </summary>
+    public string AccountId { get; set; } = string.Empty;
 }
 
 /// <summary>

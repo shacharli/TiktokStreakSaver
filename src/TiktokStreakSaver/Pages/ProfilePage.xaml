@@ -96,6 +96,11 @@
                                     HeightRequest="48"
                                     Clicked="OnLoginClicked"/>
                         </Grid>
+
+                        <Button Text="Manage accounts"
+                                Style="{StaticResource TextButton}"
+                                HeightRequest="44"
+                                Clicked="OnManageAccountsClicked"/>
                     </VerticalStackLayout>
                 </Border>
 

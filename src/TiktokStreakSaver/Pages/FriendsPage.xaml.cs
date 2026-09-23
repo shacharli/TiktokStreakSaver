@@ -207,6 +207,12 @@ public partial class FriendsPage : ContentPage
         var displayName = string.IsNullOrEmpty(friend.DisplayName) ? friend.Username : friend.DisplayName;
         infoStack.Children.Add(new Label { Text = displayName, FontSize = 15, FontFamily = "InterSemiBold" });
         var subtitleText = friend.IsGroup ? "Group" : $"@{friend.Username}";
+        var accountsForLabel = _accountService.GetAccounts();
+        if (accountsForLabel.Count > 1)
+        {
+            var owner = accountsForLabel.FirstOrDefault(a => a.Id == AccountService.ResolveAccountId(friend, accountsForLabel));
+            if (owner != null) subtitleText += $" · {owner.Label}";
+        }
         infoStack.Children.Add(new Label { Text = subtitleText, FontSize = 13, TextColor = GetThemeColor("Gray400", "#8B8F96") });
         if (friend.LastMessageSent.HasValue)
             infoStack.Children.Add(new Label { Text = $"Last sent: {friend.LastMessageSent.Value:MMM dd}", FontSize = 12, TextColor = GetThemeColor("Gray400", "#8B8F96") });
@@ -279,8 +285,26 @@ public partial class FriendsPage : ContentPage
 
     private void OnSearchFriendTextChanged(object? sender, TextChangedEventArgs e) => LoadLists();
 
+    private readonly AccountService _accountService = new();
+    private List<Account> _accounts = new();
+
+    private void PopulateAccountPicker(Picker picker, Border pickerBorder)
+    {
+        _accounts = _accountService.GetAccounts();
+        picker.ItemsSource = _accounts.Select(a => a.Label).ToList();
+        if (_accounts.Count > 0) picker.SelectedIndex = 0;
+        pickerBorder.IsVisible = _accounts.Count > 1;
+    }
+
+    private string SelectedAccountId(Picker picker) =>
+        _accounts.Count == 0 ? string.Empty : _accounts[Math.Clamp(picker.SelectedIndex, 0, _accounts.Count - 1)].Id;
+
+    private bool InAccount(FriendConfig f, string accountId) =>
+        (AccountService.ResolveAccountId(f, _accounts) ?? string.Empty) == accountId;
+
     private void OnAddFriendClicked(object? sender, EventArgs e)
     {
+        PopulateAccountPicker(NewFriendAccountPicker, NewFriendAccountBorder);
         AddFriendPanel.IsVisible = true;
         NewFriendUsernameEntry.Text = string.Empty;
         NewFriendDisplayNameEntry.Text = string.Empty;
@@ -295,9 +319,10 @@ public partial class FriendsPage : ContentPage
         var displayName = NewFriendDisplayNameEntry.Text?.Trim();
         if (string.IsNullOrEmpty(username)) { await DisplayAlert("Error", "Please enter a username", "OK"); return; }
         var existing = _settingsService.GetFriendsList();
-        if (existing.Any(f => !f.IsGroup && f.Username.Equals(username, StringComparison.OrdinalIgnoreCase)))
-        { await DisplayAlert("Error", "This friend is already in your list", "OK"); return; }
-        var friend = new FriendConfig { Username = username, DisplayName = displayName ?? string.Empty, IsEnabled = true, IsGroup = false };
+        var accountId = SelectedAccountId(NewFriendAccountPicker);
+        if (existing.Any(f => !f.IsGroup && f.Username.Equals(username, StringComparison.OrdinalIgnoreCase) && InAccount(f, accountId)))
+        { await DisplayAlert("Error", "This friend is already in this account's list", "OK"); return; }
+        var friend = new FriendConfig { Username = username, DisplayName = displayName ?? string.Empty, IsEnabled = true, IsGroup = false, AccountId = accountId };
         if (!_settingsService.TryAddFriend(friend, out var error))
         {
             await DisplayAlert("Could Not Save", error ?? "Friend could not be saved on this device.", "OK");
@@ -340,6 +365,7 @@ public partial class FriendsPage : ContentPage
 
     private void OnAddGroupClicked(object? sender, EventArgs e)
     {
+        PopulateAccountPicker(NewGroupAccountPicker, NewGroupAccountBorder);
         AddGroupPanel.IsVisible = true;
         NewGroupNameEntry.Text = string.Empty;
         NewGroupDisplayNameEntry.Text = string.Empty;
@@ -355,8 +381,9 @@ public partial class FriendsPage : ContentPage
         if (string.IsNullOrEmpty(matchName)) { await DisplayAlert("Error", "Please enter a group chat name", "OK"); return; }
 
         var existing = _settingsService.GetFriendsList();
-        if (existing.Any(f => f.IsGroup && f.DisplayName.Equals(matchName, StringComparison.OrdinalIgnoreCase)))
-        { await DisplayAlert("Error", "This group is already in your list", "OK"); return; }
+        var groupAccountId = SelectedAccountId(NewGroupAccountPicker);
+        if (existing.Any(f => f.IsGroup && f.DisplayName.Equals(matchName, StringComparison.OrdinalIgnoreCase) && InAccount(f, groupAccountId)))
+        { await DisplayAlert("Error", "This group is already in this account's list", "OK"); return; }
 
         // For groups, DisplayName doubles as the matching key against the TikTok chat header.
         var group = new FriendConfig
@@ -364,7 +391,8 @@ public partial class FriendsPage : ContentPage
             Username = string.Empty,
             DisplayName = string.IsNullOrEmpty(displayName) ? matchName : matchName,
             IsGroup = true,
-            IsEnabled = true
+            IsEnabled = true,
+            AccountId = groupAccountId
         };
         if (!_settingsService.TryAddFriend(group, out var error))
         {
@@ -429,16 +457,18 @@ public partial class FriendsPage : ContentPage
             int added = 0, updated = 0, skipped = 0;
             var seenFriends = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var seenGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var knownAccounts = _accountService.GetAccounts();
             foreach (var entry in imported)
             {
+                if (!knownAccounts.Any(a => a.Id == entry.AccountId)) entry.AccountId = string.Empty;
                 if (entry.IsGroup)
                 {
                     var name = (entry.DisplayName ?? string.Empty).Trim();
                     if (string.IsNullOrEmpty(name)) { skipped++; continue; }
                     entry.DisplayName = name;
                     entry.Username = string.Empty;
-                    if (!seenGroups.Add(name)) { skipped++; continue; }
-                    var match = existing.FirstOrDefault(f => f.IsGroup && f.DisplayName.Equals(name, StringComparison.OrdinalIgnoreCase));
+                    if (!seenGroups.Add((entry.AccountId ?? string.Empty) + "|" + name)) { skipped++; continue; }
+                    var match = existing.FirstOrDefault(f => f.IsGroup && f.DisplayName.Equals(name, StringComparison.OrdinalIgnoreCase) && (f.AccountId ?? string.Empty) == (entry.AccountId ?? string.Empty));
                     if (match != null) { entry.Id = match.Id; existing[existing.IndexOf(match)] = entry; updated++; }
                     else { if (string.IsNullOrEmpty(entry.Id)) entry.Id = Guid.NewGuid().ToString(); existing.Add(entry); added++; }
                 }
@@ -447,8 +477,8 @@ public partial class FriendsPage : ContentPage
                     if (string.IsNullOrWhiteSpace(entry.Username) || entry.Username.Trim().TrimStart('@').Length < 2) { skipped++; continue; }
                     entry.Username = entry.Username.Trim().TrimStart('@');
                     entry.DisplayName = entry.DisplayName?.Trim() ?? string.Empty;
-                    if (!seenFriends.Add(entry.Username)) { skipped++; continue; }
-                    var match = existing.FirstOrDefault(f => !f.IsGroup && f.Username.Equals(entry.Username, StringComparison.OrdinalIgnoreCase));
+                    if (!seenFriends.Add((entry.AccountId ?? string.Empty) + "|" + entry.Username)) { skipped++; continue; }
+                    var match = existing.FirstOrDefault(f => !f.IsGroup && f.Username.Equals(entry.Username, StringComparison.OrdinalIgnoreCase) && (f.AccountId ?? string.Empty) == (entry.AccountId ?? string.Empty));
                     if (match != null) { entry.Id = match.Id; existing[existing.IndexOf(match)] = entry; updated++; }
                     else { if (string.IsNullOrEmpty(entry.Id)) entry.Id = Guid.NewGuid().ToString(); existing.Add(entry); added++; }
                 }

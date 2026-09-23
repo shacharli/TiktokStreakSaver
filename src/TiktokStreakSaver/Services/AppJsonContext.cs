@@ -5,6 +5,8 @@ namespace TiktokStreakSaver.Services;
 
 [JsonSerializable(typeof(FriendConfig))]
 [JsonSerializable(typeof(List<FriendConfig>))]
+[JsonSerializable(typeof(Account))]
+[JsonSerializable(typeof(List<Account>))]
 [JsonSerializable(typeof(StreakRunResult))]
 [JsonSerializable(typeof(List<StreakRunResult>))]
 [JsonSerializable(typeof(FriendMessageResult))]
