@@ -63,7 +63,10 @@ alive_or_die() {
   pid=$(adb shell pidof "$PKG" | tr -d '\r')
   crash=$(adb logcat -d 2>/dev/null | grep -B3 -A45 -E "FATAL EXCEPTION|Unhandled managed exception|Fatal signal" | head -70)
   if [ -z "$pid" ] || [ -n "$crash" ]; then
-    err "CRASH after: $step" "${crash:-process exited with no logcat crash marker}"
+    if [ -z "$crash" ]; then
+      crash=$(adb logcat -d -b all 2>/dev/null | grep -E "$PKG|AndroidRuntime|monodroid|mono-rt|am_crash|am_proc_died|am_anr|has died|Force finishing|FATAL" | tail -c 3300)
+    fi
+    err "CRASH after: $step" "${crash:-process exited with no logcat marker}"
     local last
     last=$(adb shell run-as "$PKG" cat files/last_crash.txt 2>/dev/null)
     [ -n "$last" ] && err "last_crash.txt" "$last"
@@ -93,6 +96,7 @@ sleep 25
 snapshot launch
 alive_or_die launch
 
+step welcome "Continue" 8
 step profile "Profile" 4
 step accounts "Manage accounts" 4
 step add-account "Add account" 3
