@@ -89,7 +89,8 @@ relaunch() {
 alive_or_die() {
   local step="$1" mode="${2:-die}" pid crash events managed
   pid=$(adb shell pidof "$PKG" | tr -d '\r')
-  crash=$(adb logcat -d 2>/dev/null | grep -B3 -A45 -E "FATAL EXCEPTION|Unhandled managed exception|Fatal signal" | head -70)
+  # Only count crashes from this app's process; the UI inspection tool itself sometimes crashes on emulators.
+  crash=$(adb logcat -d -b crash 2>/dev/null | grep -A45 -E "Process: $PKG" | head -70)
   if [ -n "$pid" ] && [ -z "$crash" ]; then return 0; fi
 
   events=$(adb logcat -d -b events 2>/dev/null | grep -E "am_finish_activity|wm_finish_activity|am_crash|am_proc_died.*$PKG|am_destroy_activity|am_anr" | tail -c 1500)
@@ -145,6 +146,11 @@ snapshot launch
 alive_or_die launch
 
 step welcome "Continue" 8 recover
+if dump_ui upd && grep -q "Update Available" "$OUT/upd.xml"; then
+  err "update popup" "the Update Available popup is still shown on this build"
+  FAIL=1
+  tap_text "Later"; sleep 3
+fi
 step profile "Profile" 4
 step accounts "Manage accounts" 4
 step add-account "Add account" 3
