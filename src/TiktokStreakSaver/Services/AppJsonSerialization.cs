@@ -35,14 +35,18 @@ public sealed class FlexibleNullableDateTimeConverter : JsonConverter<DateTime?>
         if (reader.TokenType == JsonTokenType.String)
         {
             var s = reader.GetString();
-            return string.IsNullOrEmpty(s) ? null : DateTime.Parse(s, null, System.Globalization.DateTimeStyles.RoundtripKind);
+            // Values are written as UTC; hand them back as local time so display and "today" checks use the device's clock.
+            return string.IsNullOrEmpty(s) ? null : ToLocal(DateTime.Parse(s, null, System.Globalization.DateTimeStyles.RoundtripKind));
         }
 
         if (reader.TokenType == JsonTokenType.Number && reader.TryGetDouble(out var num))
-            return AppleReferenceUtc.AddSeconds(num);
+            return AppleReferenceUtc.AddSeconds(num).ToLocalTime();
 
         throw new JsonException($"Unexpected token for DateTime?: {reader.TokenType}");
     }
+
+    private static DateTime ToLocal(DateTime value) =>
+        value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
 
     public override void Write(Utf8JsonWriter writer, DateTime? value, JsonSerializerOptions options)
     {
