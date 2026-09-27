@@ -231,6 +231,41 @@ public partial class HistoryPage : ContentPage
 #endif
     }
 
+    private async void OnDetailsClicked(object? sender, EventArgs e)
+    {
+#if ANDROID
+        var logs = TiktokStreakSaver.Platforms.Android.Services.StreakService.GetLogs();
+#elif IOS
+        var logs = TiktokStreakSaver.Platforms.iOS.Services.IosRunLogStore.GetLogs();
+#else
+        var logs = new List<string>();
+#endif
+        var text = logs.Count == 0
+            ? "No detailed log yet. Start a run, then come back here."
+            : string.Join(Environment.NewLine, logs.TakeLast(400));
+
+        var label = new Label { Text = text, FontFamily = "monospace", FontSize = 11, LineBreakMode = LineBreakMode.CharacterWrap };
+        var scroll = new ScrollView { Content = label, Padding = 12 };
+        var close = new Button { Text = "Close", HeightRequest = 44 };
+        var page = new ContentPage
+        {
+            Title = "Detailed log",
+            Content = new Grid
+            {
+                RowDefinitions = { new RowDefinition { Height = GridLength.Star }, new RowDefinition { Height = GridLength.Auto } },
+                Children = { scroll }
+            }
+        };
+        ((Grid)page.Content).Add(close, 0, 1);
+        close.Clicked += async (_, _) => await Navigation.PopModalAsync();
+        page.Appearing += async (_, _) =>
+        {
+            await Task.Delay(150);
+            await scroll.ScrollToAsync(label, ScrollToPosition.End, false);
+        };
+        await Navigation.PushModalAsync(page);
+    }
+
     private async void OnExportLogsClicked(object? sender, EventArgs e)
     {
         if (_isExportingLogs) return;

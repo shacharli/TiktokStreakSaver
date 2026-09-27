@@ -46,10 +46,14 @@
 
                 <Border Style="{StaticResource SectionCard}">
                     <VerticalStackLayout Spacing="12">
-                        <Grid ColumnDefinitions="*, Auto, Auto" ColumnSpacing="8">
+                        <Grid ColumnDefinitions="*, Auto, Auto, Auto" ColumnSpacing="8">
                             <Label Text="Run Log"
                                    Style="{StaticResource SectionLabel}"
                                    VerticalOptions="Center"/>
+                            <Button Grid.Column="3"
+                                    Text="Details"
+                                    Style="{StaticResource TextButton}"
+                                    Clicked="OnDetailsClicked"/>
                             <Button Grid.Column="1"
                                     Text="Clear"
                                     Style="{StaticResource TextButton}"

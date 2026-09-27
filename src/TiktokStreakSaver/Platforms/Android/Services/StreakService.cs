@@ -72,22 +72,14 @@ public class StreakService : Service
     private const int MaxSendAttemptsPerFriend = 4;
     private bool _allowSendRetries = true;
 
-    private static List<string> _logs = new();
+    public static List<string> GetLogs() => RunLog.Read();
 
-    public static List<string> GetLogs()
-    {
-        return _logs ?? new List<string>();
-    }
-
-    public static void ClearLogs()
-    {
-        _logs = new List<string>();
-    }
+    public static void ClearLogs() => RunLog.Clear();
 
     private static void AppLog(string phase, string username, string message)
     {
-        var entry = $"[{DateTime.Now:HH:mm:ss}] [{phase}] [{username}] {message}";
-        _logs.Add(entry);
+        var entry = $"[{DateTime.Now:MM-dd HH:mm:ss}] [{phase}] [{username}] {message}";
+        RunLog.Append(entry);
         System.Diagnostics.Debug.WriteLine(entry);
     }
 
@@ -287,7 +279,8 @@ public class StreakService : Service
             _currentFriendIndex = 0;
             _runResult = new StreakRunResult();
             _cooldownSkippedCount = 0;
-            _logs.Clear();
+            RunLog.Append(string.Empty);
+            AppLog("SYSTEM", "-", "===== Run started =====");
 
             _friendsToProcess = new List<FriendConfig>();
             _accountIndex = 0;
@@ -396,6 +389,7 @@ public class StreakService : Service
 
     internal void OnPageLoaded(string url)
     {
+        AppLog("PAGE", _currentAccount?.Label ?? "-", url.Length > 120 ? url[..120] : url);
         // Check if we're on the messages page
         if (url.Contains("tiktok.com/messages"))
         {
@@ -993,8 +987,7 @@ public class StreakService : Service
         [Export("log")]
         public void Log(string message)
         {
-            var entry = $"[{DateTime.Now:HH:mm:ss}] {message}";
-            StreakService._logs.Add(entry);
+            RunLog.Append($"[{DateTime.Now:MM-dd HH:mm:ss}] [JS] {message}");
         }
     }
 }
