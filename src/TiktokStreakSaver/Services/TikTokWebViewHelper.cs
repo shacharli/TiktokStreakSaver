@@ -30,7 +30,8 @@ public static class TikTokWebViewHelper
                 awv.SetWebViewClient(new Android.Webkit.WebViewClient());
                 awv.StopLoading();
                 awv.OnPause();
-                awv.PauseTimers();
+                // Not PauseTimers(): it freezes JavaScript in every WebView in the process, including the
+                // background streak run's WebView, and nothing resumed it.
                 awv.LoadUrl("about:blank");
             }
             webView.Source = null;

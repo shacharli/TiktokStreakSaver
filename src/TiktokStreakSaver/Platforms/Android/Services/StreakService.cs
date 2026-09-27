@@ -45,6 +45,7 @@ public class StreakService : Service
     private bool _accountExpired;
     private bool _anyAccountFailed;
     private int _accountGeneration;
+    private bool _accountActive;
 
     // ── Randomized Normal Messages state ──
     private List<string>? _shuffledNormalMessages;
@@ -348,6 +349,9 @@ public class StreakService : Service
 
             _webView = new WebView(this);
             _webView.Settings.JavaScriptEnabled = true;
+            // PauseTimers() is process-wide; make sure a previous WebView teardown did not leave JS frozen.
+            _webView.ResumeTimers();
+            _webView.OnResume();
             _webView.Settings.DomStorageEnabled = true;
             _webView.Settings.DatabaseEnabled = true;
             _webView.Settings.CacheMode = CacheModes.Normal;
@@ -390,6 +394,7 @@ public class StreakService : Service
     internal void OnPageLoaded(string url)
     {
         AppLog("PAGE", _currentAccount?.Label ?? "-", url.Length > 120 ? url[..120] : url);
+        if (!_accountActive || _isCancelRequested) return;
         // Check if we're on the messages page
         if (url.Contains("tiktok.com/messages"))
         {
@@ -419,6 +424,7 @@ public class StreakService : Service
             if (_accountIndex >= _accountQueue.Count) { FinishRun(); return; }
 
             var batch = _accountQueue[_accountIndex];
+            _accountActive = true;
             _currentAccount = batch.Account;
             _friendsToProcess = batch.Friends;
             _currentFriendIndex = 0;
@@ -441,6 +447,7 @@ public class StreakService : Service
             _webView.Settings.UserAgentString = string.IsNullOrEmpty(batch.Account.UserAgent)
                 ? AppConstants.DesktopChromeUserAgent
                 : batch.Account.UserAgent;
+            _webView.ResumeTimers();
             _webView.LoadUrl(MessagesUrl);
 
             _mainHandler?.PostDelayed(() => CheckNavigation(generation, retried: false), 8000);
@@ -464,7 +471,11 @@ public class StreakService : Service
     private void CheckNavigation(int generation, bool retried)
     {
         if (generation != _accountGeneration || _automationStarted || _isCancelRequested) return;
-        if ((_webView?.Url ?? "").Contains("tiktok.com/messages")) return;
+        if ((_webView?.Url ?? "").Contains("tiktok.com/messages"))
+        {
+            StartWhenDomReady(generation);
+            return;
+        }
 
         if (!retried)
         {
@@ -473,6 +484,27 @@ public class StreakService : Service
             return;
         }
         FinishAccount(false, "Could not navigate to tiktok.com/messages");
+    }
+
+    // TikTok's page can keep loading resources long after its content is usable, so onPageFinished
+    // may arrive very late. Poll the DOM instead of waiting for it.
+    private void StartWhenDomReady(int generation)
+    {
+        if (generation != _accountGeneration || _automationStarted || _isCancelRequested || _webView == null) return;
+        _webView.EvaluateJavascript("document.readyState", new JsCallback(result =>
+        {
+            if (generation != _accountGeneration || _automationStarted || _isCancelRequested) return;
+            var state = (result ?? string.Empty).Trim('"');
+            if (state == "interactive" || state == "complete")
+            {
+                AppLog("NAVIGATION", "-", $"Page usable (readyState={state}) before load finished");
+                OnPageLoaded(_webView?.Url ?? MessagesUrl);
+            }
+            else
+            {
+                _mainHandler?.PostDelayed(() => StartWhenDomReady(generation), 3000);
+            }
+        }));
     }
 
     private void ExpireCurrentAccount(string reason)
@@ -499,6 +531,8 @@ public class StreakService : Service
 
     private async void FinishAccount(bool ok, string message)
     {
+        if (!_accountActive) return;
+        _accountActive = false;
         try
         {
             _accountGeneration++;
@@ -564,7 +598,7 @@ public class StreakService : Service
 
     private void ProcessNextFriend()
     {
-        if (_isCancelRequested) return;
+        if (_isCancelRequested || !_accountActive) return;
 
         // When "Skip Unreachable Users" is OFF, abort the entire run on any per-user failure
         bool skipUnreachable = _settingsService?.GetSkipUnreachableUsers() ?? false;
@@ -657,7 +691,7 @@ public class StreakService : Service
 
     internal void OnMessageResult(string username, bool success, string error)
     {
-        if (_isCancelRequested) return;
+        if (_isCancelRequested || !_accountActive) return;
         if (_friendsToProcess == null || _settingsService == null) return;
 
         // The JS callback reports the target it was given: a username for DMs, or the
@@ -925,6 +959,14 @@ public class StreakService : Service
             StopForeground(StopForegroundFlags.Remove);
             StopSelf();
         }
+    }
+
+    [Microsoft.Maui.Controls.Internals.Preserve(AllMembers = true)]
+    private sealed class JsCallback : Java.Lang.Object, IValueCallback
+    {
+        private readonly Action<string?> _onResult;
+        public JsCallback(Action<string?> onResult) => _onResult = onResult;
+        public void OnReceiveValue(Java.Lang.Object? value) => _onResult(value?.ToString());
     }
 
     /// <summary>
